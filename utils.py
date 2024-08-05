@@ -12,6 +12,8 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 
+from misc import get_last_user_message
+
 
 class ChromaRetriever(BaseRetriever):
     collection: Any
@@ -268,3 +270,92 @@ def query_collection_with_hybrid_search(
         except:
             pass
     return merge_and_sort_query_results(results, k=k, reverse=True)
+
+
+def get_rag_context(
+    files,
+    messages,
+    embedding_function,
+    k,
+    reranking_function,
+    r,
+    hybrid_search,
+):
+    log.debug(f"files: {files} {messages} {embedding_function} {reranking_function}")
+    query = get_last_user_message(messages)
+
+    extracted_collections = []
+    relevant_contexts = []
+
+    for file in files:
+        context = None
+
+        collection_names = (
+            file["collection_names"]
+            if file["type"] == "collection"
+            else [file["collection_name"]]
+        )
+
+        collection_names = set(collection_names).difference(extracted_collections)
+        if not collection_names:
+            log.debug(f"skipping {file} as it has already been extracted")
+            continue
+
+        try:
+            if file["type"] == "text":
+                context = file["content"]
+            else:
+                if hybrid_search:
+                    context = query_collection_with_hybrid_search(
+                        collection_names=collection_names,
+                        query=query,
+                        embedding_function=embedding_function,
+                        k=k,
+                        reranking_function=reranking_function,
+                        r=r,
+                    )
+                else:
+                    context = query_collection(
+                        collection_names=collection_names,
+                        query=query,
+                        embedding_function=embedding_function,
+                        k=k,
+                    )
+        except Exception as e:
+            log.exception(e)
+            context = None
+
+        if context:
+            relevant_contexts.append({**context, "source": file})
+
+        extracted_collections.extend(collection_names)
+
+    context_string = ""
+
+    citations = []
+    for context in relevant_contexts:
+        try:
+            if "documents" in context:
+                context_string += "\n\n".join(
+                    [text for text in context["documents"][0] if text is not None]
+                )
+
+                if "metadatas" in context:
+                    citations.append(
+                        {
+                            "source": context["source"],
+                            "document": context["documents"][0],
+                            "metadata": context["metadatas"][0],
+                        }
+                    )
+        except Exception as e:
+            log.exception(e)
+
+    context_string = context_string.strip()
+
+    return context_string, citations
+
+def rag_template(template: str, context: str, query: str):
+    template = template.replace("[context]", context)
+    template = template.replace("[query]", query)
+    return template

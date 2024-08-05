@@ -1,4 +1,9 @@
+import json
+from typing import Optional
 from dotenv import load_dotenv
+
+from misc import add_or_update_system_message, get_last_user_message
+from utils import get_rag_context, rag_template
 
 load_dotenv()
 
@@ -6,10 +11,12 @@ import logging
 import os
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import StreamingResponse
 
-from rag import app as ragapp
+from rag import app as rag_app
 # from app.gradio_ui.ui import gradio_iface
 
 # from instrument import instrument
@@ -20,10 +27,10 @@ app = FastAPI(title="RAG x FastAPI")
 
 environment = os.getenv("ENVIRONMENT", "dev")  # Default to 'development' if not set
 
+log = logging.getLogger("uvicorn")
 
 if environment == "dev":
-    logger = logging.getLogger("uvicorn")
-    logger.warning("Running in development mode - allowing CORS for all origins")
+    log.warning("Running in development mode - allowing CORS for all origins")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -34,186 +41,268 @@ if environment == "dev":
 
 @app.get("/api/version")
 async def get_app_config():
-    breakpoint()
+
     return {
         "version": "demo",
     }
 
-@app.post("/api/chat/completions")
-async def generate_chat_completions(form_data: dict, user=Depends(get_verified_user)):
-    model_id = form_data["model"]
-    if model_id not in app.state.MODELS:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Model not found",
-        )
-    return await generate_openai_chat_completion(form_data, user=user)
+# @app.post("/chat/completions")
+# @app.post("/chat/completions/{url_idx}")
+# async def generate_chat_completion(
+#     form_data: dict,
+#     url_idx: Optional[int] = None,
+# ):
+#     idx = 0
+#     payload = {**form_data}
 
-@app.post("/api/chat/completed")
-async def chat_completed(form_data: dict, user=Depends(get_verified_user)):
-    data = form_data
-    model_id = data["model"]
-    if model_id not in app.state.MODELS:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Model not found",
-        )
-    model = app.state.MODELS[model_id]
+#     model_id = form_data.get("model")
+#     model_info = Models.get_model_by_id(model_id)
 
-    filters = [
-        model
-        for model in app.state.MODELS.values()
-        if "pipeline" in model
-        and "type" in model["pipeline"]
-        and model["pipeline"]["type"] == "filter"
-        and (
-            model["pipeline"]["pipelines"] == ["*"]
-            or any(
-                model_id == target_model_id
-                for target_model_id in model["pipeline"]["pipelines"]
-            )
-        )
-    ]
+#     if model_info:
+#         if model_info.base_model_id:
+#             payload["model"] = model_info.base_model_id
 
-    sorted_filters = sorted(filters, key=lambda x: x["pipeline"]["priority"])
-    if "pipeline" in model:
-        sorted_filters = [model] + sorted_filters
+#         model_info.params = model_info.params.model_dump()
 
-    for filter in sorted_filters:
-        r = None
-        try:
-            urlIdx = filter["urlIdx"]
+#         if model_info.params:
+#             if model_info.params.get("temperature", None) is not None:
+#                 payload["temperature"] = float(model_info.params.get("temperature"))
 
-            url = openai_app.state.config.OPENAI_API_BASE_URLS[urlIdx]
-            key = openai_app.state.config.OPENAI_API_KEYS[urlIdx]
+#             if model_info.params.get("top_p", None):
+#                 payload["top_p"] = int(model_info.params.get("top_p", None))
 
-            if key != "":
-                headers = {"Authorization": f"Bearer {key}"}
-                r = requests.post(
-                    f"{url}/{filter['id']}/filter/outlet",
-                    headers=headers,
-                    json={
-                        "user": {
-                            "id": user.id,
-                            "name": user.name,
-                            "email": user.email,
-                            "role": user.role,
-                        },
-                        "body": data,
-                    },
+#             if model_info.params.get("max_tokens", None):
+#                 payload["max_tokens"] = int(model_info.params.get("max_tokens", None))
+
+#             if model_info.params.get("frequency_penalty", None):
+#                 payload["frequency_penalty"] = int(
+#                     model_info.params.get("frequency_penalty", None)
+#                 )
+
+#             if model_info.params.get("seed", None):
+#                 payload["seed"] = model_info.params.get("seed", None)
+
+#             if model_info.params.get("stop", None):
+#                 payload["stop"] = (
+#                     [
+#                         bytes(stop, "utf-8").decode("unicode_escape")
+#                         for stop in model_info.params["stop"]
+#                     ]
+#                     if model_info.params.get("stop", None)
+#                     else None
+#                 )
+
+#         system = model_info.params.get("system", None)
+#         if system:
+#             system = prompt_template(
+#                 system,
+#                 **(
+#                     {
+#                         "user_name": user.name,
+#                         "user_location": (
+#                             user.info.get("location") if user.info else None
+#                         ),
+#                     }
+#                     if user
+#                     else {}
+#                 ),
+#             )
+#             # Check if the payload already has a system message
+#             # If not, add a system message to the payload
+#             if payload.get("messages"):
+#                 for message in payload["messages"]:
+#                     if message.get("role") == "system":
+#                         message["content"] = system + message["content"]
+#                         break
+#                 else:
+#                     payload["messages"].insert(
+#                         0,
+#                         {
+#                             "role": "system",
+#                             "content": system,
+#                         },
+#                     )
+
+#     else:
+#         pass
+
+#     model = app.state.MODELS[payload.get("model")]
+#     idx = model["urlIdx"]
+
+#     if "pipeline" in model and model.get("pipeline"):
+#         payload["user"] = {
+#             "name": user.name,
+#             "id": user.id,
+#             "email": user.email,
+#             "role": user.role,
+#         }
+
+#     # Check if the model is "gpt-4-vision-preview" and set "max_tokens" to 4000
+#     # This is a workaround until OpenAI fixes the issue with this model
+#     if payload.get("model") == "gpt-4-vision-preview":
+#         if "max_tokens" not in payload:
+#             payload["max_tokens"] = 4000
+#         log.debug("Modified payload:", payload)
+
+#     # Convert the modified body back to JSON
+#     payload = json.dumps(payload)
+
+#     log.debug(payload)
+
+#     url = app.state.config.OPENAI_API_BASE_URLS[idx]
+#     key = app.state.config.OPENAI_API_KEYS[idx]
+
+#     headers = {}
+#     headers["Authorization"] = f"Bearer {key}"
+#     headers["Content-Type"] = "application/json"
+
+#     r = None
+#     session = None
+#     streaming = False
+
+#     try:
+#         session = aiohttp.ClientSession(trust_env=True)
+#         r = await session.request(
+#             method="POST",
+#             url=f"{url}/chat/completions",
+#             data=payload,
+#             headers=headers,
+#         )
+
+#         r.raise_for_status()
+
+#         # Check if response is SSE
+#         if "text/event-stream" in r.headers.get("Content-Type", ""):
+#             streaming = True
+#             return StreamingResponse(
+#                 r.content,
+#                 status_code=r.status,
+#                 headers=dict(r.headers),
+#                 background=BackgroundTask(
+#                     cleanup_response, response=r, session=session
+#                 ),
+#             )
+#         else:
+#             response_data = await r.json()
+#             return response_data
+#     except Exception as e:
+#         log.exception(e)
+#         error_detail = "Open WebUI: Server Connection Error"
+#         if r is not None:
+#             try:
+#                 res = await r.json()
+#                 print(res)
+#                 if "error" in res:
+#                     error_detail = f"External: {res['error']['message'] if 'message' in res['error'] else res['error']}"
+#             except:
+#                 error_detail = f"External: {e}"
+#         raise HTTPException(status_code=r.status if r else 500, detail=error_detail)
+#     finally:
+#         if not streaming and session:
+#             if r:
+#                 r.close()
+#             await session.close()
+
+@app.post("/chat/demo_rag")
+async def generate_chat_completion(
+    form_data: dict
+):
+    val = form_data['model']
+    return {"value": val }
+
+class ChatCompletionMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        data_items = []
+
+        show_citations = False
+        citations = []
+
+        if request.method == "POST" and any(
+            endpoint in request.url.path
+            for endpoint in ["/chat/demo_rag"]
+        ):
+            log.debug(f"request.url.path: {request.url.path}")
+
+            # Read the original request body
+            body = await request.body()
+            body_str = body.decode("utf-8")
+            data = json.loads(body_str) if body_str else {}
+
+            # Flag to skip RAG completions if file_handler is present in tools/functions
+            skip_files = False
+
+            prompt = get_last_user_message(data["messages"])
+            context = ""
+
+            # If files field is present, generate RAG completions
+            # If skip_files is True, skip the RAG completions
+            if "files" in data:
+                if not skip_files:
+                    data = {**data}
+                    rag_context, rag_citations = get_rag_context(
+                        files=data["files"],
+                        messages=data["messages"],
+                        k=rag_app.state.config.TOP_K,
+                        embedding_function=rag_app.state.EMBEDDING_FUNCTION,
+                        reranking_function=None,
+                        r=None,
+                        hybrid_search=rag_app.state.config.ENABLE_RAG_HYBRID_SEARCH,
+                    )
+                    if rag_context:
+                        context += ("\n" if context != "" else "") + rag_context
+
+                    log.debug(f"rag_context: {rag_context}, citations: {citations}")
+
+                del data["files"]
+
+            if context != "":
+                system_prompt = rag_template(
+                    rag_app.state.config.RAG_TEMPLATE, context, prompt
+                )
+                print(system_prompt)
+                data["messages"] = add_or_update_system_message(
+                    system_prompt, data["messages"]
                 )
 
-                r.raise_for_status()
-                data = r.json()
-        except Exception as e:
-            # Handle connection error here
-            print(f"Connection error: {e}")
+            modified_body_bytes = json.dumps(data).encode("utf-8")
+            # Replace the request body with the modified one
+            request._body = modified_body_bytes
+            # Set custom header to ensure content-length matches new body length
+            request.headers.__dict__["_list"] = [
+                (b"content-length", str(len(modified_body_bytes)).encode("utf-8")),
+                *[
+                    (k, v)
+                    for k, v in request.headers.raw
+                    if k.lower() != b"content-length"
+                ],
+            ]
 
-            if r is not None:
-                try:
-                    res = r.json()
-                    if "detail" in res:
-                        return JSONResponse(
-                            status_code=r.status_code,
-                            content=res,
-                        )
-                except:
-                    pass
+            response = await call_next(request)
+            if isinstance(response, StreamingResponse):
+                # If it's a streaming response, inject it as SSE event or NDJSON line
+                content_type = response.headers.get("Content-Type")
+                if "text/event-stream" in content_type:
+                    return StreamingResponse(
+                        self.openai_stream_wrapper(response.body_iterator, data_items),
+                    )
 
+                return response
             else:
-                pass
+                return response
+    
+    async def _receive(self, body: bytes):
+        return {"type": "http.request", "body": body, "more_body": False}
 
-    def get_priority(function_id):
-        function = Functions.get_function_by_id(function_id)
-        if function is not None and hasattr(function, "valves"):
-            return (function.valves if function.valves else {}).get("priority", 0)
-        return 0
+    async def openai_stream_wrapper(self, original_generator, data_items):
+        for item in data_items:
+            yield f"data: {json.dumps(item)}\n\n"
 
-    filter_ids = [function.id for function in Functions.get_global_filter_functions()]
-    if "info" in model and "meta" in model["info"]:
-        filter_ids.extend(model["info"]["meta"].get("filterIds", []))
-        filter_ids = list(set(filter_ids))
-
-    enabled_filter_ids = [
-        function.id
-        for function in Functions.get_functions_by_type("filter", active_only=True)
-    ]
-    filter_ids = [
-        filter_id for filter_id in filter_ids if filter_id in enabled_filter_ids
-    ]
-
-    # Sort filter_ids by priority, using the get_priority function
-    filter_ids.sort(key=get_priority)
-
-    for filter_id in filter_ids:
-        filter = Functions.get_function_by_id(filter_id)
-        if filter:
-            if filter_id in webui_app.state.FUNCTIONS:
-                function_module = webui_app.state.FUNCTIONS[filter_id]
-            else:
-                function_module, function_type, frontmatter = (
-                    load_function_module_by_id(filter_id)
-                )
-                webui_app.state.FUNCTIONS[filter_id] = function_module
-
-            if hasattr(function_module, "valves") and hasattr(
-                function_module, "Valves"
-            ):
-                valves = Functions.get_function_valves_by_id(filter_id)
-                function_module.valves = function_module.Valves(
-                    **(valves if valves else {})
-                )
-
-            try:
-                if hasattr(function_module, "outlet"):
-                    outlet = function_module.outlet
-
-                    # Get the signature of the function
-                    sig = inspect.signature(outlet)
-                    params = {"body": data}
-
-                    if "__user__" in sig.parameters:
-                        __user__ = {
-                            "id": user.id,
-                            "email": user.email,
-                            "name": user.name,
-                            "role": user.role,
-                        }
-
-                        try:
-                            if hasattr(function_module, "UserValves"):
-                                __user__["valves"] = function_module.UserValves(
-                                    **Functions.get_user_valves_by_id_and_user_id(
-                                        filter_id, user.id
-                                    )
-                                )
-                        except Exception as e:
-                            print(e)
-
-                        params = {**params, "__user__": __user__}
-
-                    if "__id__" in sig.parameters:
-                        params = {
-                            **params,
-                            "__id__": filter_id,
-                        }
-
-                    if inspect.iscoroutinefunction(outlet):
-                        data = await outlet(**params)
-                    else:
-                        data = outlet(**params)
-
-            except Exception as e:
-                print(f"Error: {e}")
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"detail": str(e)},
-                )
-
-    return data
+        async for data in original_generator:
+            yield data
 
 
-app.mount( "/api/rag", ragapp)
+app.add_middleware(ChatCompletionMiddleware)
+app.mount( "/api/rag", rag_app)
 
 
 

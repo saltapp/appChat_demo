@@ -622,7 +622,7 @@ ENABLE_OPENAI_API = PersistentConfig(
 )
 
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "*************************")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_API_BASE_URL = os.environ.get("OPENAI_API_BASE_URL", "")
 
 
@@ -651,7 +651,7 @@ OPENAI_API_BASE_URLS = PersistentConfig(
     "OPENAI_API_BASE_URLS", "openai.api_base_urls", OPENAI_API_BASE_URLS
 )
 
-OPENAI_API_KEY = "******************"
+
 
 try:
     OPENAI_API_KEY = OPENAI_API_KEYS.value[
@@ -923,7 +923,7 @@ ENABLE_RAG_WEB_LOADER_SSL_VERIFICATION = PersistentConfig(
 RAG_EMBEDDING_ENGINE = PersistentConfig(
     "RAG_EMBEDDING_ENGINE",
     "rag.embedding_engine",
-    os.environ.get("RAG_EMBEDDING_ENGINE", ""),
+    os.environ.get("RAG_EMBEDDING_ENGINE", "openai"),
 )
 
 PDF_EXTRACT_IMAGES = PersistentConfig(

@@ -147,6 +147,44 @@ app.state.config.TAVILY_API_KEY = TAVILY_API_KEY
 app.state.config.RAG_WEB_SEARCH_RESULT_COUNT = RAG_WEB_SEARCH_RESULT_COUNT
 app.state.config.RAG_WEB_SEARCH_CONCURRENT_REQUESTS = RAG_WEB_SEARCH_CONCURRENT_REQUESTS
 
+def get_embedding_function(
+    embedding_engine,
+    embedding_model,
+    openai_key,
+    openai_url,
+    batch_size,
+):
+    
+        func = lambda query: generate_openai_embeddings(
+            model=embedding_model,
+            text=query,
+            key=openai_key,
+            url=openai_url,
+        )
+
+        def generate_multiple(query, f):
+            if isinstance(query, list):
+                if embedding_engine == "openai":
+                    embeddings = []
+                    for i in range(0, len(query), batch_size):
+                        embeddings.extend(f(query[i : i + batch_size]))
+                    return embeddings
+                else:
+                    return [f(q) for q in query]
+            else:
+                return f(query)
+
+        return lambda query: generate_multiple(query, func)
+
+app.state.EMBEDDING_FUNCTION = get_embedding_function(
+    app.state.config.RAG_EMBEDDING_ENGINE,
+    app.state.config.RAG_EMBEDDING_MODEL,
+    app.state.config.OPENAI_API_KEY,
+    app.state.config.OPENAI_API_BASE_URL,
+    app.state.config.RAG_EMBEDDING_OPENAI_BATCH_SIZE,
+)
+
+
 def store_data_in_vector_db(data, collection_name, overwrite: bool = False) -> bool:
 
     text_splitter = RecursiveCharacterTextSplitter(
