@@ -4,6 +4,7 @@ import aiohttp
 from dotenv import load_dotenv
 from httpx import AsyncClient
 
+from backend.ui.routers import chats
 from config import OPENAI_API_BASE_URLS, OPENAI_API_KEYS, AppConfig
 from misc import add_or_update_system_message, get_last_user_message
 from utils import get_rag_context, rag_template
@@ -243,6 +244,8 @@ class ChatCompletionMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(ChatCompletionMiddleware)
+
+app.inclue_router(chats.router, prefix="/chats", tags=["chats"])
 app.mount( "/api/rag", rag_app)
 
 
