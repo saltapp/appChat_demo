@@ -7,7 +7,9 @@ from httpx import AsyncClient
 from ui.routers import chats
 from config import OPENAI_API_BASE_URLS, OPENAI_API_KEYS, AppConfig
 from misc import add_or_update_system_message, get_last_user_message
-from utils import get_rag_context, rag_template
+from rag.utils import rag_template
+from rag.utils import get_rag_context
+
 
 load_dotenv()
 
@@ -21,7 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
-from rag import app as rag_app
+from rag.rag import app as rag_app
 # from app.gradio_ui.ui import gradio_iface
 
 # from instrument import instrument
